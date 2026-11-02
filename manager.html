@@ -21,13 +21,16 @@
   <div id="loginView" class="login-view" hidden>
     <p>尚未登录知乎，无法读取收藏夹。</p>
     <button id="loginBtn" class="btn btn-primary">去登录知乎</button>
-    <p class="hint">登录完成后回到本页，点击“刷新收藏夹”。</p>
+    <p class="hint">登录完成后回到本页，点击"刷新收藏夹"。</p>
   </div>
 
   <main id="mainView" class="layout" hidden>
     <!-- 左侧：收藏夹列表 -->
     <aside class="sidebar">
-      <input id="collectionFilter" class="input" type="text" placeholder="搜索收藏夹…">
+      <div class="sidebar-header">
+        <input id="collectionFilter" class="input" type="text" placeholder="搜索收藏夹…">
+        <button id="createCollectionBtn" class="btn btn-primary btn-sm" title="新建收藏夹">+ 新建</button>
+      </div>
       <ul id="collectionList" class="collection-list"></ul>
     </aside>
 
@@ -84,6 +87,44 @@
       <div class="modal-actions">
         <button id="moveCancel" class="btn btn-ghost">取消</button>
         <button id="moveConfirm" class="btn btn-primary" disabled>移动</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建/编辑收藏夹弹窗 -->
+  <div id="collectionModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="collectionModalTitle">新建收藏夹</h2>
+      <div class="form-group">
+        <label for="collectionNameInput">收藏夹名称</label>
+        <input id="collectionNameInput" class="input" type="text" maxlength="50" placeholder="请输入收藏夹名称">
+      </div>
+      <div class="form-group">
+        <label for="collectionDescInput">描述（可选）</label>
+        <textarea id="collectionDescInput" class="input" rows="3" maxlength="200" placeholder="收藏夹描述"></textarea>
+      </div>
+      <div class="form-group form-checkbox">
+        <label>
+          <input type="checkbox" id="collectionPublicInput">
+          <span>公开收藏夹</span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="collectionModalCancel" class="btn btn-ghost">取消</button>
+        <button id="collectionModalConfirm" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 删除收藏夹确认弹窗 -->
+  <div id="deleteModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>删除收藏夹</h2>
+      <p id="deleteTip" class="modal-tip">确定要删除这个收藏夹吗？</p>
+      <p class="modal-warning">⚠️ 删除后收藏夹内的所有内容将一并移除，且无法恢复！</p>
+      <div class="modal-actions">
+        <button id="deleteCancel" class="btn btn-ghost">取消</button>
+        <button id="deleteConfirm" class="btn btn-danger">删除</button>
       </div>
     </div>
   </div>
