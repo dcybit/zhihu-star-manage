@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>知乎收藏夹批量管理</title>
+  <link rel="stylesheet" href="manager.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon48.png" alt="">
+      <h1>知乎收藏夹批量管理</h1>
+    </div>
+    <div class="user">
+      <span id="userInfo">检测登录中…</span>
+      <button id="refreshCollectionsBtn" class="btn btn-ghost" title="重新加载收藏夹列表">刷新收藏夹</button>
+    </div>
+  </header>
+
+  <!-- 未登录提示 -->
+  <div id="loginView" class="login-view" hidden>
+    <p>尚未登录知乎，无法读取收藏夹。</p>
+    <button id="loginBtn" class="btn btn-primary">去登录知乎</button>
+    <p class="hint">登录完成后回到本页，点击“刷新收藏夹”。</p>
+  </div>
+
+  <main id="mainView" class="layout" hidden>
+    <!-- 左侧：收藏夹列表 -->
+    <aside class="sidebar">
+      <input id="collectionFilter" class="input" type="text" placeholder="搜索收藏夹…">
+      <ul id="collectionList" class="collection-list"></ul>
+    </aside>
+
+    <!-- 右侧：收藏内容 -->
+    <section class="content">
+      <div class="toolbar">
+        <label class="check">
+          <input type="checkbox" id="selectAll">
+          <span>全选</span>
+        </label>
+        <button id="invertBtn" class="btn btn-ghost">反选</button>
+        <span id="selCount" class="sel-count">已选 0 项</span>
+        <input id="itemFilter" class="input grow" type="text" placeholder="在当前收藏夹内筛选标题 / 作者…">
+        <button id="reloadItemsBtn" class="btn btn-ghost">重新加载</button>
+      </div>
+
+      <div class="toolbar">
+        <button id="removeBtn" class="btn btn-danger" disabled>取消收藏选中项</button>
+        <button id="moveBtn" class="btn btn-ghost" disabled>移动到其他收藏夹</button>
+        <div class="spacer"></div>
+        <span class="export-label">导出：</span>
+        <button class="btn btn-ghost export-btn" data-fmt="json">JSON</button>
+        <button class="btn btn-ghost export-btn" data-fmt="markdown">Markdown</button>
+        <button class="btn btn-ghost export-btn" data-fmt="csv">CSV</button>
+        <button id="exportLinksBtn" class="btn btn-ghost">仅标题和链接 (TXT)</button>
+        <button id="exportContentBtn" class="btn btn-ghost">正文 Markdown (ZIP)</button>
+      </div>
+
+      <div id="statusBar" class="status-bar">请选择左侧的收藏夹</div>
+
+      <div class="items-scroll">
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th class="col-check"></th>
+              <th class="col-type">类型</th>
+              <th>标题</th>
+              <th class="col-author">作者</th>
+            </tr>
+          </thead>
+          <tbody id="itemsBody"></tbody>
+        </table>
+        <div id="emptyTip" class="empty-tip" hidden>暂无内容</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 移动到收藏夹弹窗 -->
+  <div id="moveModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>移动到其他收藏夹</h2>
+      <p id="moveTip" class="modal-tip"></p>
+      <ul id="moveList" class="move-list"></ul>
+      <div class="modal-actions">
+        <button id="moveCancel" class="btn btn-ghost">取消</button>
+        <button id="moveConfirm" class="btn btn-primary" disabled>移动</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="manager.js"></script>
+</body>
+</html>
