@@ -92,6 +92,16 @@ body {
 }
 .sidebar-header .input {
   flex: 1;
+  width: 100%;
+}
+.sidebar-create-row {
+  display: flex;
+  margin-top: 8px;
+}
+.sidebar-create-row .btn {
+  flex: 1;
+  width: 100%;
+  justify-content: center;
 }
 .btn-sm {
   padding: 6px 10px;
