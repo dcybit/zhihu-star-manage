@@ -222,11 +222,16 @@ function zseEncrypt(md5Str) {
 function makeSignHeaders(url, dc0, pathOnly) {
   const u = new URL(url);
   const apiPath = pathOnly ? u.pathname : (u.pathname + u.search);
+  const signSrc = `101_3_3.0+${apiPath}+${dc0}`;
+  const md5Out = md5Hex(signSrc);
+  const zse96 = '2.0_' + zseEncrypt(md5Out);
   return {
     'x-api-version': '3.0.91',
     'x-app-za': 'OS=Web',
     'x-zse-93': '101_3_3.0',
-    'x-zse-96': '2.0_' + zseEncrypt(md5Hex(`101_3_3.0+${apiPath}+${dc0}`))
+    'x-zse-96': zse96,
+    // 调试字段（非 HTTP header，仅用于日志）
+    __debug: { apiPath, signSrc, md5: md5Out, zse96, dc0Preview: dc0.slice(0, 20) + '...' }
   };
 }
 
@@ -250,39 +255,54 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           body = JSON.stringify(msg.body);
         }
       }
-      const doFetch = (h) => fetch(msg.url, { method, credentials: 'include', headers: h, body });
+      const doFetchRaw = async (h) => {
+        const { __debug, ...httpHeaders } = h;
+        if (__debug) console.info('[zhihu-sign] debug', JSON.stringify(__debug));
+        const resp = await fetch(msg.url, { method, credentials: 'include', headers: httpHeaders, body });
+        const text = await resp.text();
+        let parsed = null;
+        try { parsed = text ? JSON.parse(text) : null; } catch {}
+        return { status: resp.status, ok: resp.ok, text, data: parsed };
+      };
 
       // 文章类接口强制校验 x-zse-96：api.zhihu.com 的文章也会 40362
       const needsArticleSign = method === 'GET' &&
         (msg.url.includes('/api/v4/articles/') || msg.url.includes('/api/articles/'));
 
-      let resp;
+      let result;
       if (needsArticleSign) {
         const dc0 = await getCookie('d_c0');
+        console.info('[zhihu-sign] target url=', msg.url);
+        console.info('[zhihu-sign] d_c0 exists=', !!dc0, dc0 ? `len=${dc0.length} preview=${dc0.slice(0, 24)}|...` : '(empty!)');
         if (dc0) {
-          // 四种签名变体，覆盖 pathname-only / pathname+search × 完整d_c0 / 截断d_c0
           const dc0Variants = [dc0, dc0.split('|')[0]];
-          const pathVariants = [true, false]; // true=pathname-only, false=pathname+search
-          let last403 = null;
+          const pathVariants = [true, false];
           for (const dv of dc0Variants) {
             for (const pv of pathVariants) {
-              resp = await doFetch(Object.assign({}, headers, makeSignHeaders(msg.url, dv, pv)));
-              if (resp.status !== 403) break;
-              last403 = resp;
+              const signHeaders = makeSignHeaders(msg.url, dv, pv);
+              const d = signHeaders.__debug;
+              const r = await doFetchRaw(Object.assign({}, headers, signHeaders));
+              const errMsg = (r.data && r.data.error)
+                ? `${r.data.error.code || ''} ${r.data.error.message || ''}` : '';
+              console.info('[zhihu-sign] attempt',
+                `pathOnly=${pv}`,
+                `dc0Cut=${dv.length < dc0.length}`,
+                `status=${r.status}`,
+                `md5=${d.md5}`,
+                `zse96=${d.zse96}`,
+                `=> ${errMsg || '(ok/no-error)'}`);
+              if (r.status !== 403) { result = r; break; }
             }
-            if (resp && resp.status !== 403) break;
+            if (result && result.status !== 403) break;
           }
-          if (!resp) resp = last403;
         } else {
-          resp = await doFetch(headers);
+          console.warn('[zhihu-sign] d_c0 cookie 为空，无法生成签名，请先登录知乎');
         }
-      } else {
-        resp = await doFetch(headers);
       }
-      const text = await resp.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
-      sendResponse({ ok: resp.ok, status: resp.status, data });
+      if (!result) {
+        result = await doFetchRaw(headers);
+      }
+      sendResponse({ ok: result.ok, status: result.status, data: result.data });
     } catch (e) {
       sendResponse({ ok: false, status: 0, error: String(e && e.message || e) });
     }
