@@ -207,10 +207,9 @@ function zseEncrypt(md5Str) {
 }
 
 // 文章类接口需要签名，其余接口不校验，保持原样避免回归
-async function getArticleSignHeaders(url) {
+// d_c0 形如 "xxx|时间戳"，签名必须用完整 cookie 值（含 | 后缀）
+function getArticleSignHeaders(url, dc0) {
   const apiPath = new URL(url).pathname + new URL(url).search;
-  const dc0 = (await getCookie('d_c0')).split('|')[0];
-  if (!dc0) return {};
   return {
     'x-api-version': '3.0.91',
     'x-app-za': 'OS=Web',
@@ -229,9 +228,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (method !== 'GET') {
         headers['x-xsrftoken'] = await getCookie('_xsrf');
       }
-      if (method === 'GET' && msg.url.includes('/api/v4/articles/')) {
-        Object.assign(headers, await getArticleSignHeaders(msg.url));
-      }
       let body;
       if (msg.body !== undefined && msg.body !== null) {
         if (msg.bodyType === 'form') {
@@ -242,12 +238,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           body = JSON.stringify(msg.body);
         }
       }
-      const resp = await fetch(msg.url, {
-        method,
-        credentials: 'include',
-        headers,
-        body
-      });
+      const doFetch = (h) => fetch(msg.url, { method, credentials: 'include', headers: h, body });
+
+      let resp = await doFetch(headers);
+      // 文章接口强制校验 x-zse-96：先用完整 d_c0 签名，被拒再退回去掉 | 后缀的写法
+      if (method === 'GET' && msg.url.includes('/api/v4/articles/')) {
+        const dc0 = await getCookie('d_c0');
+        if (dc0) {
+          for (const d of [dc0, dc0.split('|')[0]]) {
+            resp = await doFetch(Object.assign({}, headers, getArticleSignHeaders(msg.url, d)));
+            if (resp.status !== 403) break;
+          }
+        }
+      }
       const text = await resp.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = null; }
