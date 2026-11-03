@@ -356,8 +356,8 @@ async function selectSidebarItem(raw) {
 
 /* ---------- mine 域：加载收藏内容 ---------- */
 
-// 按类型端点加载收藏夹内容
-// 知乎 v4 设计：answers / articles / videos / pins 分接口；/items 老接口可能不返回视频/想法
+// 知乎 v4 收藏夹内容只用一个端点：/collections/{cid}/items
+// 分类型端点（/answers /articles /videos /pins）全部 404，已废弃
 async function loadCurrentContent() {
   if (!state.current) return;
   state.items = [];
@@ -366,55 +366,31 @@ async function loadCurrentContent() {
 
   const cid = state.current.id;
   const allRaw = [];
+  let offset = 0;
 
-  // 先尝试老的 /items 统一接口
-  const itemsData = await fetchPaginatedList(`/collections/${cid}/items`);
-  console.log('[loadContent] /items 返回', itemsData.ok ? itemsData.data.length + ' 条' : '失败', itemsData.ok ? 'type分布:' + itemsData.data.map(d => d.content?.type || d.type || '?').join(',') : '');
-  if (itemsData.ok) {
-    allRaw.push(...itemsData.data);
-  }
-
-  // 并行拉取分类型端点，补齐 answers / articles / videos / pins
-  const typeEndpoints = [
-    `collections/${cid}/answers`,
-    `collections/${cid}/articles`,
-    `collections/${cid}/videos`,
-    `collections/${cid}/pins`,
-  ];
-
-  setStatus(`正在加载「${state.current.title}」…`);
-
-  // 对每个类型端点分页拉全量
-  await Promise.all(typeEndpoints.map(async (ep) => {
-    const r = await fetchPaginatedList(`/${ep}`);
-    const epName = ep.split('/').pop();
-    console.log('[loadContent]', epName, '返回', r.ok ? r.data.length + ' 条' : '失败(' + r.status + ')');
-    if (r.ok && r.data.length > 0) {
-      // 打印前 2 条的 keys，看字段结构
-      if (r.data[0]) console.log('[loadContent]', epName, '首条 keys=', Object.keys(r.data[0]));
-      // 分类型端点返回的是 answer/article/pin 的 raw 结构，需包装成 { content: raw } 再统一 normalize
-      allRaw.push(...r.data.map((raw) => wrapTypeSpecific(raw, ep)));
+  for (;;) {
+    const url = `https://www.zhihu.com/api/v4/collections/${cid}/items?offset=${offset}&limit=20`;
+    const resp = await api('GET', url);
+    if (!resp.ok || !resp.data || !Array.isArray(resp.data.data)) {
+      setStatus(`「${state.current.title}」加载失败（HTTP ${resp.status || '网络错误'}）`);
+      break;
     }
-  }));
-
-  // 去重：按 type + contentId
-  const seen = new Set();
-  const uniq = [];
-  for (const raw of allRaw) {
-    const key = `${raw.content?.type || raw.type || 'x'}_${raw.content?.id ?? raw.id ?? ''}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    uniq.push(raw);
+    allRaw.push(...resp.data.data);
+    const typeCounts = {};
+    allRaw.forEach((d) => {
+      const t = d.content?.type || '?';
+      typeCounts[t] = (typeCounts[t] || 0) + 1;
+    });
+    setStatus(`正在加载「${state.current.title}」… ${allRaw.length} 条（${Object.entries(typeCounts).map(([t, n]) => `${typeLabel(t)} ${n}`).join('，')}）`);
+    if ((resp.data.paging && resp.data.paging.is_end) || resp.data.data.length === 0) break;
+    offset += resp.data.data.length;
   }
 
-  // 最后用 /items 端点的 content.type 作为权威类型（如果存在）
-  // 分类型端点没有 content 包装，直接是 answer/article/pin 结构
-  state.items = uniq.map((item, idx) => normalizeMineItem(item, idx));
+  state.items = allRaw.map((item, idx) => normalizeMineItem(item, idx));
 
   if (state.items.length === 0) {
     setStatus(`「${state.current.title}」加载完成（0 条内容）`);
   } else {
-    // 按 type 统计
     const counts = {};
     state.items.forEach((it) => { counts[it.type] = (counts[it.type] || 0) + 1; });
     const label = Object.entries(counts).map(([t, n]) => `${typeLabel(t)} ${n}`).join('，');
@@ -427,23 +403,32 @@ function typeLabel(t) {
   return { answer: '回答', article: '文章', pin: '想法', video: '视频', zvideo: '视频' }[t] || t;
 }
 
-// 分类型端点（answers/articles/videos/pins）返回的是 raw answer/article/pin/video 结构
-// 统一包装成 { content: raw } 让 normalizeMineItem 能复用
-function wrapTypeSpecific(raw, endpoint) {
-  const typeMap = {
-    answers: 'answer',
-    articles: 'article',
-    videos: 'video',
-    pins: 'pin',
-  };
-  const type = typeMap[endpoint.split('/').pop()] || 'unknown';
-  // 分类型端点的 raw 自带 type=answer/article，但视频可能是 video 或 zvideo
-  if (raw.type) return { content: raw };
-  return { content: { ...raw, type } };
+// pin 富文本 content 是 Array（block 结构），遍历提取纯文本
+function extractPinText(content) {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts = [];
+  for (const block of content) {
+    if (!block) continue;
+    if (typeof block === 'string') {
+      parts.push(block);
+    } else if (typeof block === 'object') {
+      // 可能的字段：content / text / value / excerpt / body
+      const txt = block.content || block.text || block.value || block.excerpt || block.body || block.title || '';
+      if (txt) parts.push(String(txt));
+      // 递归嵌套（少数 pin block 里还有子数组）
+      if (Array.isArray(block.blocks) || Array.isArray(block.children)) {
+        const sub = extractPinText(block.blocks || block.children);
+        if (sub) parts.push(sub);
+      }
+    }
+  }
+  return parts.join('').replace(/<[^>]*>/g, '').trim();
 }
 
 function normalizeMineItem(item, idx) {
-  const c = item.content || item || {};
+  const c = item.content || {};
   // 兜底：如果 item 本身就是 answer/article 结构（分类型端点包装失败）
   const rawType = c.type || item.type || 'unknown';
   const type = rawType;
@@ -458,39 +443,18 @@ function normalizeMineItem(item, idx) {
     title = c.title || '(无标题文章)';
     url = c.url || `https://zhuanlan.zhihu.com/p/${c.id}`;
   } else if (type === 'pin') {
-    // 想法正文：字段名不确定，先看 raw 的所有 keys 再找
-    const allKeys = Object.keys(c);
-    // 常见字段名依次尝试
-    const bodyCandidates = [
-      c.content,              // HTML 正文（最常见）
-      c.render,               // HTML 渲染版
-      c.excerpt,              // 摘要
-      c.body,                 // 纯文本正文
-      c.text_content,         // 纯文本
-      c.textContent,
-      c.pure_content,         // 纯净版
-      c.raw_content,
-      c.highlight,            // 高亮版
-      c.description,          // 偶尔
-    ];
-    let rawBody = bodyCandidates.find((v) => v && typeof v === 'string' && v.trim().length > 0) || '';
-
-    if (!rawBody && c.pic_num > 0) {
-      rawBody = `[图片想法 × ${c.pic_num}]`;
+    // pin 有 excerpt_title 作为展示摘要，直接用
+    let rawBody = c.excerpt_title || '';
+    // 如果 excerpt_title 不够长，从 content Array 提取更多纯文本拼接
+    if (!rawBody || rawBody.length < 10) {
+      rawBody = extractPinText(c.content);
     }
-    if (!rawBody && Array.isArray(c.pictures) && c.pictures.length) {
-      rawBody = `[图片想法 × ${c.pictures.length}]`;
-    }
-    title = String(rawBody).replace(/<[^>]*>/g, '').trim();
-    if (!title) title = '(无内容想法)';
+    title = rawBody ? String(rawBody).trim() : '(无内容想法)';
     if (title.length > 40) title = title.slice(0, 40) + '…';
 
-    // URL：pin 几乎一定能从 id 推导
-    const pinId = c.id ?? c.p_id ?? c._id ?? item.id;
-    url = c.url || c.href || (pinId ? `https://www.zhihu.com/pin/${pinId}` : '');
-
-    // 每个 pin 都打印 raw，拿到真实结构后再精简 fallback
-    console.log('[pin raw keys]', allKeys, 'url=', url, 'title=', title.slice(0, 30), 'raw=', c);
+    // URL：pin 结构自带 url（形如 https://www.zhihu.com/pin/{id}?native=0）
+    const pinId = c.id ?? item.id;
+    url = c.url || (pinId ? `https://www.zhihu.com/pin/${pinId}` : '');
   } else if (type === 'video' || type === 'zvideo') {
     title = c.title || '(无标题视频)';
     url = c.url || '';
@@ -499,13 +463,6 @@ function normalizeMineItem(item, idx) {
     title = c.title || (c.question && c.question.title) || '(其他内容)';
     url = c.url || '';
     if (url && url.startsWith('/')) url = 'https://www.zhihu.com' + url;
-  }
-  // 调试：发现 URL 为空时打印原始结构，方便后续修复
-  if (!url && (type === 'pin' || type === 'video' || type === 'zvideo')) {
-    console.warn('[normalizeMineItem]', type, 'url 为空, raw=', c);
-  }
-  if (type === 'pin' && title.startsWith('(无标题想法)')) {
-    console.warn('[normalizeMineItem] pin title 为空, raw=', c);
   }
   return {
     uid: `${type}_${c.id != null ? c.id : `idx${idx}`}`,
