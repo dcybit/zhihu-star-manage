@@ -369,6 +369,7 @@ async function loadCurrentContent() {
 
   // 先尝试老的 /items 统一接口
   const itemsData = await fetchPaginatedList(`/collections/${cid}/items`);
+  console.log('[loadContent] /items 返回', itemsData.ok ? itemsData.data.length + ' 条' : '失败', itemsData.ok ? 'type分布:' + itemsData.data.map(d => d.content?.type || d.type || '?').join(',') : '');
   if (itemsData.ok) {
     allRaw.push(...itemsData.data);
   }
@@ -386,7 +387,11 @@ async function loadCurrentContent() {
   // 对每个类型端点分页拉全量
   await Promise.all(typeEndpoints.map(async (ep) => {
     const r = await fetchPaginatedList(`/${ep}`);
+    const epName = ep.split('/').pop();
+    console.log('[loadContent]', epName, '返回', r.ok ? r.data.length + ' 条' : '失败(' + r.status + ')');
     if (r.ok && r.data.length > 0) {
+      // 打印前 2 条的 keys，看字段结构
+      if (r.data[0]) console.log('[loadContent]', epName, '首条 keys=', Object.keys(r.data[0]));
       // 分类型端点返回的是 answer/article/pin 的 raw 结构，需包装成 { content: raw } 再统一 normalize
       allRaw.push(...r.data.map((raw) => wrapTypeSpecific(raw, ep)));
     }
@@ -453,19 +458,39 @@ function normalizeMineItem(item, idx) {
     title = c.title || '(无标题文章)';
     url = c.url || `https://zhuanlan.zhihu.com/p/${c.id}`;
   } else if (type === 'pin') {
-    // 想法：优先取 content（HTML），fallback 到 excerpt/render/text_content
-    let rawBody = c.content || c.excerpt || c.render || c.text_content || '';
-    if (!rawBody && c.pic_num > 0 && Array.isArray(c.pictures)) {
-      // 纯图片想法，没有正文
+    // 想法正文：字段名不确定，先看 raw 的所有 keys 再找
+    const allKeys = Object.keys(c);
+    // 常见字段名依次尝试
+    const bodyCandidates = [
+      c.content,              // HTML 正文（最常见）
+      c.render,               // HTML 渲染版
+      c.excerpt,              // 摘要
+      c.body,                 // 纯文本正文
+      c.text_content,         // 纯文本
+      c.textContent,
+      c.pure_content,         // 纯净版
+      c.raw_content,
+      c.highlight,            // 高亮版
+      c.description,          // 偶尔
+    ];
+    let rawBody = bodyCandidates.find((v) => v && typeof v === 'string' && v.trim().length > 0) || '';
+
+    if (!rawBody && c.pic_num > 0) {
       rawBody = `[图片想法 × ${c.pic_num}]`;
+    }
+    if (!rawBody && Array.isArray(c.pictures) && c.pictures.length) {
+      rawBody = `[图片想法 × ${c.pictures.length}]`;
     }
     title = String(rawBody).replace(/<[^>]*>/g, '').trim();
     if (!title) title = '(无内容想法)';
     if (title.length > 40) title = title.slice(0, 40) + '…';
-    // URL：优先 c.url，再拼 pin/{id}，再拼 pin/{p_id}
-    const pinId = c.id ?? c.p_id ?? item.id;
-    url = c.url || (pinId ? `https://www.zhihu.com/pin/${pinId}` : '');
-    if (!url && c.href) url = c.href; // 偶尔 mobile API 用 href
+
+    // URL：pin 几乎一定能从 id 推导
+    const pinId = c.id ?? c.p_id ?? c._id ?? item.id;
+    url = c.url || c.href || (pinId ? `https://www.zhihu.com/pin/${pinId}` : '');
+
+    // 每个 pin 都打印 raw，拿到真实结构后再精简 fallback
+    console.log('[pin raw keys]', allKeys, 'url=', url, 'title=', title.slice(0, 30), 'raw=', c);
   } else if (type === 'video' || type === 'zvideo') {
     title = c.title || '(无标题视频)';
     url = c.url || '';
