@@ -207,9 +207,11 @@ function zseEncrypt(md5Str) {
 }
 
 // 文章类接口需要签名，其余接口不校验，保持原样避免回归
-// d_c0 形如 "xxx|时间戳"，签名必须用完整 cookie 值（含 | 后缀）
-function getArticleSignHeaders(url, dc0) {
-  const apiPath = new URL(url).pathname + new URL(url).search;
+// 2026-11 实测：知乎签名源串用 pathname（不含 query），d_c0 用完整 cookie 值（含 | 时间戳）
+// 为防将来变更，对 pathname-only 和 pathname+search 两种源串都做变体签名重试
+function makeSignHeaders(url, dc0, pathOnly) {
+  const u = new URL(url);
+  const apiPath = pathOnly ? u.pathname : (u.pathname + u.search);
   return {
     'x-api-version': '3.0.91',
     'x-app-za': 'OS=Web',
@@ -240,16 +242,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       const doFetch = (h) => fetch(msg.url, { method, credentials: 'include', headers: h, body });
 
-      let resp = await doFetch(headers);
-      // 文章接口强制校验 x-zse-96：先用完整 d_c0 签名，被拒再退回去掉 | 后缀的写法
-      if (method === 'GET' && msg.url.includes('/api/v4/articles/')) {
+      // 文章类接口强制校验 x-zse-96：api.zhihu.com 的文章也会 40362
+      const needsArticleSign = method === 'GET' &&
+        (msg.url.includes('/api/v4/articles/') || msg.url.includes('/api/articles/'));
+
+      let resp;
+      if (needsArticleSign) {
         const dc0 = await getCookie('d_c0');
         if (dc0) {
-          for (const d of [dc0, dc0.split('|')[0]]) {
-            resp = await doFetch(Object.assign({}, headers, getArticleSignHeaders(msg.url, d)));
-            if (resp.status !== 403) break;
+          // 四种签名变体，覆盖 pathname-only / pathname+search × 完整d_c0 / 截断d_c0
+          const dc0Variants = [dc0, dc0.split('|')[0]];
+          const pathVariants = [true, false]; // true=pathname-only, false=pathname+search
+          let last403 = null;
+          for (const dv of dc0Variants) {
+            for (const pv of pathVariants) {
+              resp = await doFetch(Object.assign({}, headers, makeSignHeaders(msg.url, dv, pv)));
+              if (resp.status !== 403) break;
+              last403 = resp;
+            }
+            if (resp && resp.status !== 403) break;
           }
+          if (!resp) resp = last403;
+        } else {
+          resp = await doFetch(headers);
         }
+      } else {
+        resp = await doFetch(headers);
       }
       const text = await resp.text();
       let data = null;
