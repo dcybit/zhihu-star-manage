@@ -544,7 +544,7 @@ function renderFollowDetail(raw) {
   const openBtn = document.createElement('button');
   openBtn.className = 'btn btn-ghost';
   openBtn.textContent = '在新标签页打开';
-  openBtn.addEventListener('click', () => window.open(followDetailUrl(raw), '_blank'));
+  openBtn.addEventListener('click', () => openInNewTab(followDetailUrl(raw)));
   actions.append(unfollowBtn, openBtn);
 
   td.append(h2, meta, actions);
@@ -563,10 +563,18 @@ function followDetailUrl(raw) {
   if (state.scope === 'favlists_follow') return `https://www.zhihu.com/collection/${raw.id}`;
   if (state.scope === 'questions_follow') return `https://www.zhihu.com/question/${raw.id}`;
   if (state.scope === 'columns_follow') {
-    if (raw.url_token) return `https://zhuanlan.zhihu.com/${raw.url_token}`;
-    return `https://zhuanlan.zhihu.com/p/${raw.id}`;
+    // 专栏统一走 www.zhihu.com/column/ 路由：直接打开 zhuanlan.zhihu.com 会触发
+    // 环境校验（resolv 请求被 CORS 拦截）导致页面无法正常显示
+    const token = raw.url_token || (raw.id != null ? `c_${raw.id}` : '');
+    return token ? `https://www.zhihu.com/column/${token}` : '';
   }
   return '';
+}
+
+// 统一用 chrome.tabs.create 打开链接，避免 window.open 被拦截或开成弹窗
+function openInNewTab(url) {
+  if (!url) return;
+  chrome.tabs.create({ url });
 }
 
 function removeFromSidebar(raw) {
