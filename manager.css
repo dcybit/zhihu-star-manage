@@ -264,6 +264,8 @@ body {
 }
 .badge-answer { background: #e8f0fe; color: #056de8; }
 .badge-article { background: #e6f7e9; color: #1a9c3e; }
+.badge-pin { background: #fde8e8; color: #e04e4e; }
+.badge-video { background: #fff4e6; color: #d48806; }
 .badge-other { background: #f2f2f2; color: #8590a6; }
 
 .item-title a {
