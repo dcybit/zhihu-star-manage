@@ -170,6 +170,15 @@ async function loadSidebarByScope(scope) {
     const r = await fetchPaginatedList(`/members/${meUrl}/following-columns`);
     if (!r.ok) { setStatus(`关注专栏加载失败（HTTP ${r.status}）`); return false; }
     state.followColumns = r.data;
+    // 调试：打印原始字段，确认 url_token / id / 真实专栏 URL 应该怎么拼
+    console.log('[debug] followColumns raw sample:', r.data.slice(0, 3).map((c) => ({
+      id: c.id,
+      url_token: c.url_token,
+      title: c.title,
+      url: c.url,
+      type: c.type,
+      articles_count: c.articles_count,
+    })));
     setStatus(`共关注 ${r.data.length} 个专栏`);
     return true;
   }
@@ -563,10 +572,13 @@ function followDetailUrl(raw) {
   if (state.scope === 'favlists_follow') return `https://www.zhihu.com/collection/${raw.id}`;
   if (state.scope === 'questions_follow') return `https://www.zhihu.com/question/${raw.id}`;
   if (state.scope === 'columns_follow') {
-    // 专栏统一走 www.zhihu.com/column/ 路由：直接打开 zhuanlan.zhihu.com 会触发
-    // 环境校验（resolv 请求被 CORS 拦截）导致页面无法正常显示
-    const token = raw.url_token || (raw.id != null ? `c_${raw.id}` : '');
-    return token ? `https://www.zhihu.com/column/${token}` : '';
+    // 专栏只能走 www.zhihu.com/column/c_{数字id} 路由；直接开 zhuanlan.zhihu.com
+    // 会触发 resolv 环境校验请求（被 CORS 拦截导致页面空白/404）
+    // 知乎 following-columns API 返回的专栏对象里 url_token 不是 URL path 标识，
+    // 真正的专栏路由只认 c_{数字 id}
+    if (typeof raw.url === 'string' && raw.url.startsWith('http')) return raw.url;
+    if (raw.id != null) return `https://www.zhihu.com/column/c_${raw.id}`;
+    return '';
   }
   return '';
 }
