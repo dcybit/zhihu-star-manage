@@ -438,7 +438,7 @@ function wrapTypeSpecific(raw, endpoint) {
 }
 
 function normalizeMineItem(item, idx) {
-  const c = item.content || {};
+  const c = item.content || item || {};
   // 兜底：如果 item 本身就是 answer/article 结构（分类型端点包装失败）
   const rawType = c.type || item.type || 'unknown';
   const type = rawType;
@@ -453,12 +453,19 @@ function normalizeMineItem(item, idx) {
     title = c.title || '(无标题文章)';
     url = c.url || `https://zhuanlan.zhihu.com/p/${c.id}`;
   } else if (type === 'pin') {
-    // 想法：没有标题，用正文前 40 字作为展示
-    title = c.content || '(无标题想法)';
-    // 去掉 HTML 标签
-    title = String(title).replace(/<[^>]*>/g, '').trim();
+    // 想法：优先取 content（HTML），fallback 到 excerpt/render/text_content
+    let rawBody = c.content || c.excerpt || c.render || c.text_content || '';
+    if (!rawBody && c.pic_num > 0 && Array.isArray(c.pictures)) {
+      // 纯图片想法，没有正文
+      rawBody = `[图片想法 × ${c.pic_num}]`;
+    }
+    title = String(rawBody).replace(/<[^>]*>/g, '').trim();
+    if (!title) title = '(无内容想法)';
     if (title.length > 40) title = title.slice(0, 40) + '…';
-    url = c.url || `https://www.zhihu.com/pin/${c.id}`;
+    // URL：优先 c.url，再拼 pin/{id}，再拼 pin/{p_id}
+    const pinId = c.id ?? c.p_id ?? item.id;
+    url = c.url || (pinId ? `https://www.zhihu.com/pin/${pinId}` : '');
+    if (!url && c.href) url = c.href; // 偶尔 mobile API 用 href
   } else if (type === 'video' || type === 'zvideo') {
     title = c.title || '(无标题视频)';
     url = c.url || '';
@@ -467,6 +474,13 @@ function normalizeMineItem(item, idx) {
     title = c.title || (c.question && c.question.title) || '(其他内容)';
     url = c.url || '';
     if (url && url.startsWith('/')) url = 'https://www.zhihu.com' + url;
+  }
+  // 调试：发现 URL 为空时打印原始结构，方便后续修复
+  if (!url && (type === 'pin' || type === 'video' || type === 'zvideo')) {
+    console.warn('[normalizeMineItem]', type, 'url 为空, raw=', c);
+  }
+  if (type === 'pin' && title.startsWith('(无标题想法)')) {
+    console.warn('[normalizeMineItem] pin title 为空, raw=', c);
   }
   return {
     uid: `${type}_${c.id != null ? c.id : `idx${idx}`}`,
