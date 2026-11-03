@@ -1,15 +1,14 @@
-/* 知乎收藏夹批量管理 - 管理器页面逻辑 */
+﻿/* 知乎收藏夹批量管理 - 管理器页面逻辑 */
 
 const $ = (sel) => document.querySelector(sel);
 
 const state = {
   me: null,
-  scope: 'mine',                 // 'mine' | 'favlists_follow' | 'questions_follow' | 'columns_follow' | 'videos_follow'
+  scope: 'mine',                 // 'mine' | 'favlists_follow' | 'questions_follow' | 'columns_follow'
   collections: [],
   followCollections: [],        // 关注的收藏夹
   followQuestions: [],           // 关注的问题
   followColumns: [],             // 关注的专栏
-  followVideos: [],              // 关注的视频
   current: null,                 // 当前选中的侧栏对象（收藏夹 / 关注项）
   items: [],                     // 右侧表格的 items
   selected: new Set(),           // 右侧表格的选中 uid
@@ -174,14 +173,6 @@ async function loadSidebarByScope(scope) {
     setStatus(`共关注 ${r.data.length} 个专栏`);
     return true;
   }
-  if (scope === 'videos_follow') {
-    setStatus('正在加载关注的视频…');
-    const r = await fetchPaginatedList(`/members/${meUrl}/following-videos`);
-    if (!r.ok) { setStatus(`关注视频加载失败（HTTP ${r.status}），可能当前知乎 API 不支持该端点`); return false; }
-    state.followVideos = r.data;
-    setStatus(`共关注 ${r.data.length} 个视频`);
-    return true;
-  }
   return false;
 }
 
@@ -240,7 +231,6 @@ function getSidebarRawList() {
   if (state.scope === 'favlists_follow') return state.followCollections;
   if (state.scope === 'questions_follow') return state.followQuestions;
   if (state.scope === 'columns_follow') return state.followColumns;
-  if (state.scope === 'videos_follow') return state.followVideos;
   return [];
 }
 
@@ -321,7 +311,6 @@ function rawSidebarUid(raw) {
   if (state.scope === 'mine' || state.scope === 'favlists_follow') return `fav_${raw.id}`;
   if (state.scope === 'questions_follow') return `q_${raw.id}`;
   if (state.scope === 'columns_follow') return `col_${raw.id || raw.url_token}`;
-  if (state.scope === 'videos_follow') return `v_${raw.id}`;
   return String(raw.id);
 }
 
@@ -329,7 +318,6 @@ function sidebarItemTitle(raw) {
   if (state.scope === 'mine' || state.scope === 'favlists_follow') return raw.title || '(未命名收藏夹)';
   if (state.scope === 'questions_follow') return raw.title || '(未命名问题)';
   if (state.scope === 'columns_follow') return raw.title || '(未命名专栏)';
-  if (state.scope === 'videos_follow') return raw.title || '(未命名视频)';
   return '';
 }
 
@@ -343,11 +331,6 @@ function sidebarItemCount(raw) {
   }
   if (state.scope === 'columns_follow') {
     if (typeof raw.articles_count === 'number') return `${raw.articles_count}篇`;
-    return '';
-  }
-  if (state.scope === 'videos_follow') {
-    if (typeof raw.play_count === 'number') return `${raw.play_count}播放`;
-    if (typeof raw.duration === 'number') return `${Math.round(raw.duration / 1000)}s`;
     return '';
   }
   return '';
@@ -452,7 +435,7 @@ function renderFollowDetail(raw) {
   const typeLabel = state.scope === 'favlists_follow' ? '收藏夹'
     : state.scope === 'questions_follow' ? '问题'
     : state.scope === 'columns_follow' ? '专栏'
-    : state.scope === 'videos_follow' ? '视频' : '内容';
+    : "内容";
 
   // 标题
   const h2 = document.createElement('h3');
@@ -518,7 +501,6 @@ function followDetailTitle(raw) {
   if (state.scope === 'favlists_follow') return raw.title || '(未命名收藏夹)';
   if (state.scope === 'questions_follow') return raw.title || '(未命名问题)';
   if (state.scope === 'columns_follow') return raw.title || '(未命名专栏)';
-  if (state.scope === 'videos_follow') return raw.title || '(未命名视频)';
   return '';
 }
 
@@ -529,7 +511,6 @@ function followDetailUrl(raw) {
     if (raw.url_token) return `https://zhuanlan.zhihu.com/${raw.url_token}`;
     return `https://zhuanlan.zhihu.com/p/${raw.id}`;
   }
-  if (state.scope === 'videos_follow') return `https://www.zhihu.com/video/${raw.id}`;
   return '';
 }
 
@@ -537,7 +518,6 @@ function removeFromSidebar(raw) {
   if (state.scope === 'favlists_follow') state.followCollections = state.followCollections.filter((x) => x.id !== raw.id);
   if (state.scope === 'questions_follow') state.followQuestions = state.followQuestions.filter((x) => x.id !== raw.id);
   if (state.scope === 'columns_follow') state.followColumns = state.followColumns.filter((x) => String(x.id || x.url_token) !== String(raw.id || raw.url_token));
-  if (state.scope === 'videos_follow') state.followVideos = state.followVideos.filter((x) => x.id !== raw.id);
 }
 
 /* ---------- 批量取消关注 ---------- */
@@ -555,9 +535,6 @@ async function unfollowOne(raw, scope) {
     endpoint = `/columns/${id}/followers`;
   } else if (scope === 'favlists_follow') {
     endpoint = `/collections/${raw.id}/followers`;
-  } else if (scope === 'videos_follow') {
-    // 视频取关端点推测，知乎 v4 未公开，请求失败会降级尝试下一个 host
-    endpoint = `/videos/${raw.id}/followers`;
   }
   if (!endpoint) return { ok: false, status: 0 };
 
@@ -606,7 +583,6 @@ async function batchUnfollow() {
   if (state.scope === 'favlists_follow') state.followCollections = state.followCollections.filter((r) => !okSet.has(rawSidebarUid(r)));
   if (state.scope === 'questions_follow') state.followQuestions = state.followQuestions.filter((r) => !okSet.has(rawSidebarUid(r)));
   if (state.scope === 'columns_follow') state.followColumns = state.followColumns.filter((r) => !okSet.has(rawSidebarUid(r)));
-  if (state.scope === 'videos_follow') state.followVideos = state.followVideos.filter((r) => !okSet.has(rawSidebarUid(r)));
 
   // 如果当前选中的对象被移除了
   if (state.current && !failed.includes(state.current) && okSet.has(rawSidebarUid(state.current))) {
