@@ -177,31 +177,36 @@ function zseXorBlocks(bytes, seed) {
 }
 
 function zsePreProcess(md5Str) {
-  const codes = [];
-  for (let i = 0; i < md5Str.length; i++) codes.push(md5Str.charCodeAt(i));
-  codes.unshift(0);
-  codes.unshift(Math.floor(Math.random() * 127));
-  for (let i = 0; i < 15; i++) codes.push(14);
+  // 与 zhihu_sign crate encrypt_zse_v4 一致：
+  // plain = [seed, 0, encode_uri_component(md5Str)的charCodes] + PKCS 填充到 16 字节倍数
+  const seed = 210; // 任意 u8，服务端不校验
+  const plain = [seed, 0];
+  for (let i = 0; i < md5Str.length; i++) plain.push(md5Str.charCodeAt(i));
+  const pad = 16 - (plain.length % 16);
+  for (let i = 0; i < pad; i++) plain.push(pad);
 
   const fixArr = [48, 53, 57, 48, 53, 51, 102, 55, 100, 49, 53, 101, 48, 49, 100, 55];
-  const front = codes.slice(0, 16).map((v, i) => v ^ fixArr[i] ^ 42);
+  const front = plain.slice(0, 16).map((v, i) => v ^ fixArr[i] ^ 42);
   const head = zseRound(front);
-  return head.concat(zseXorBlocks(codes.slice(16, 48), head));
+  return head.concat(zseXorBlocks(plain.slice(16), head));
 }
 
 function zseEncrypt(md5Str) {
   const processed = zsePreProcess(md5Str);
+  // custom_encode 与 Rust crate 一致：倒序每 3 字节映射为 4 个字母表字符
+  while (processed.length % 3 !== 0) processed.push(0);
   let current = 0;
+  let i = 0;
   let result = '';
-  for (let i = 0; i < processed.length; i++) {
-    const value = processed[processed.length - i - 1] ^ ((58 >>> (8 * (i % 4))) & 255);
-    current |= value << (8 * (i % 3));
-    if (i % 3 === 2) {
-      for (const shift of [0, 6, 12, 18]) {
-        result += ZSE_ALPHABET.charAt((current >>> shift) & 63);
-      }
-      current = 0;
-    }
+  for (let p = processed.length - 1; p >= 0; p -= 3) {
+    const b0 = processed[p] ^ ((58 >>> (8 * (i % 4))) & 0xFF); i++;
+    const b1 = processed[p - 1] ^ ((58 >>> (8 * (i % 4))) & 0xFF); i++;
+    const b2 = processed[p - 2] ^ ((58 >>> (8 * (i % 4))) & 0xFF); i++;
+    const v = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16);
+    result += ZSE_ALPHABET.charAt(v & 63);
+    result += ZSE_ALPHABET.charAt((v >>> 6) & 63);
+    result += ZSE_ALPHABET.charAt((v >>> 12) & 63);
+    result += ZSE_ALPHABET.charAt((v >>> 18) & 63);
   }
   return result;
 }
