@@ -356,33 +356,92 @@ async function selectSidebarItem(raw) {
 
 /* ---------- mine 域：加载收藏内容 ---------- */
 
+// 按类型端点加载收藏夹内容
+// 知乎 v4 设计：answers / articles / videos / pins 分接口；/items 老接口可能不返回视频/想法
 async function loadCurrentContent() {
   if (!state.current) return;
   state.items = [];
   state.selected.clear();
   renderItems();
-  const all = [];
-  let offset = 0;
-  for (;;) {
-    const url = `https://www.zhihu.com/api/v4/collections/${state.current.id}/items?offset=${offset}&limit=20`;
-    const resp = await api('GET', url);
-    if (!resp.ok || !resp.data || !Array.isArray(resp.data.data)) {
-      setStatus(`「${state.current.title}」加载失败（HTTP ${resp.status || '网络错误'}）`);
-      break;
-    }
-    all.push(...resp.data.data);
-    setStatus(`正在加载「${state.current.title}」… ${all.length}/${state.current.item_count || '?'}`);
-    if ((resp.data.paging && resp.data.paging.is_end) || resp.data.data.length === 0) break;
-    offset += resp.data.data.length;
+
+  const cid = state.current.id;
+  const allRaw = [];
+
+  // 先尝试老的 /items 统一接口
+  const itemsData = await fetchPaginatedList(`/collections/${cid}/items`);
+  if (itemsData.ok) {
+    allRaw.push(...itemsData.data);
   }
-  state.items = all.map((item, idx) => normalizeMineItem(item, idx));
-  setStatus(`「${state.current.title}」已加载 ${state.items.length} 条收藏`);
+
+  // 并行拉取分类型端点，补齐 answers / articles / videos / pins
+  const typeEndpoints = [
+    `collections/${cid}/answers`,
+    `collections/${cid}/articles`,
+    `collections/${cid}/videos`,
+    `collections/${cid}/pins`,
+  ];
+
+  setStatus(`正在加载「${state.current.title}」…`);
+
+  // 对每个类型端点分页拉全量
+  await Promise.all(typeEndpoints.map(async (ep) => {
+    const r = await fetchPaginatedList(`/${ep}`);
+    if (r.ok && r.data.length > 0) {
+      // 分类型端点返回的是 answer/article/pin 的 raw 结构，需包装成 { content: raw } 再统一 normalize
+      allRaw.push(...r.data.map((raw) => wrapTypeSpecific(raw, ep)));
+    }
+  }));
+
+  // 去重：按 type + contentId
+  const seen = new Set();
+  const uniq = [];
+  for (const raw of allRaw) {
+    const key = `${raw.content?.type || raw.type || 'x'}_${raw.content?.id ?? raw.id ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniq.push(raw);
+  }
+
+  // 最后用 /items 端点的 content.type 作为权威类型（如果存在）
+  // 分类型端点没有 content 包装，直接是 answer/article/pin 结构
+  state.items = uniq.map((item, idx) => normalizeMineItem(item, idx));
+
+  if (state.items.length === 0) {
+    setStatus(`「${state.current.title}」加载完成（0 条内容）`);
+  } else {
+    // 按 type 统计
+    const counts = {};
+    state.items.forEach((it) => { counts[it.type] = (counts[it.type] || 0) + 1; });
+    const label = Object.entries(counts).map(([t, n]) => `${typeLabel(t)} ${n}`).join('，');
+    setStatus(`「${state.current.title}」已加载 ${state.items.length} 条（${label}）`);
+  }
   renderItems();
+}
+
+function typeLabel(t) {
+  return { answer: '回答', article: '文章', pin: '想法', video: '视频', zvideo: '视频' }[t] || t;
+}
+
+// 分类型端点（answers/articles/videos/pins）返回的是 raw answer/article/pin/video 结构
+// 统一包装成 { content: raw } 让 normalizeMineItem 能复用
+function wrapTypeSpecific(raw, endpoint) {
+  const typeMap = {
+    answers: 'answer',
+    articles: 'article',
+    videos: 'video',
+    pins: 'pin',
+  };
+  const type = typeMap[endpoint.split('/').pop()] || 'unknown';
+  // 分类型端点的 raw 自带 type=answer/article，但视频可能是 video 或 zvideo
+  if (raw.type) return { content: raw };
+  return { content: { ...raw, type } };
 }
 
 function normalizeMineItem(item, idx) {
   const c = item.content || {};
-  const type = c.type || 'unknown';
+  // 兜底：如果 item 本身就是 answer/article 结构（分类型端点包装失败）
+  const rawType = c.type || item.type || 'unknown';
+  const type = rawType;
   let title = '';
   let url = '';
   if (type === 'answer') {
@@ -397,7 +456,7 @@ function normalizeMineItem(item, idx) {
     // 想法：没有标题，用正文前 40 字作为展示
     title = c.content || '(无标题想法)';
     // 去掉 HTML 标签
-    title = title.replace(/<[^>]*>/g, '').trim();
+    title = String(title).replace(/<[^>]*>/g, '').trim();
     if (title.length > 40) title = title.slice(0, 40) + '…';
     url = c.url || `https://www.zhihu.com/pin/${c.id}`;
   } else if (type === 'video' || type === 'zvideo') {
