@@ -331,16 +331,17 @@ async function batchRemove() {
   state.busy = true;
   updateSelectionUI();
   const failed = [];
+  const failStatuses = new Set();
   let done = 0;
 
   await runPool(targets, 3, async (it) => {
-    const url = `https://www.zhihu.com/api/v4/collections/${state.current.id}/contents/${it.contentId}`;
-    const resp = await api('DELETE', url);
-    if (resp.ok) {
+    const r = await removeOneItem(it, state.current.id);
+    if (r.ok) {
       state.selected.delete(it.uid);
       state.items = state.items.filter((x) => x.uid !== it.uid);
     } else {
       failed.push(it);
+      if (r.status) failStatuses.add(r.status);
     }
     done++;
     setStatus(`正在移除… ${done}/${targets.length}`);
@@ -354,12 +355,32 @@ async function batchRemove() {
     renderCollections($('#collectionFilter').value.trim());
   }
   if (failed.length) {
-    setStatus(`完成：成功 ${targets.length - failed.length} 条，失败 ${failed.length} 条（可能被知乎限流，稍后可重试）`);
-    alert(`有 ${failed.length} 条移除失败，可能是接口限流。请稍后重试。`);
+    const codes = failStatuses.size ? `（HTTP ${[...failStatuses].join('/')}）` : '';
+    setStatus(`完成：成功 ${targets.length - failed.length} 条，失败 ${failed.length} 条${codes}`);
+    alert(`有 ${failed.length} 条移除失败${codes}，可能是接口限流或不支持的类型。请稍后重试。`);
   } else {
     setStatus(`已成功移除 ${targets.length} 条收藏`);
   }
   updateSelectionUI();
+}
+
+// 从收藏夹移除单条内容
+// 与移动功能同一接口：PUT /collections/contents/{answer|article}/{contentId}
+// 表单体 remove_collections=收藏夹ID
+async function removeOneItem(it, collectionId) {
+  if (it.type !== 'answer' && it.type !== 'article') return { ok: false, status: 0 };
+
+  const path = `/collections/contents/${it.type}/${it.contentId}`;
+  const bases = [`https://www.zhihu.com/api/v4${path}`, `https://api.zhihu.com${path}`];
+
+  let lastStatus = 0;
+  for (const base of bases) {
+    const resp = await api('PUT', base, `remove_collections=${collectionId}`, 'form');
+    if (resp.ok) return { ok: true };
+    lastStatus = resp.status || 0;
+    console.warn('[remove] failed', base, resp.status, resp.data);
+  }
+  return { ok: false, status: lastStatus };
 }
 
 /* ---------- 移动到其他收藏夹 ---------- */
