@@ -125,8 +125,9 @@ function zsePut(value, out, offset) {
 }
 
 function zseGet(bytes, offset) {
-  return ((255 & bytes[offset]) << 24) | ((255 & bytes[offset + 1]) << 16) |
-    ((255 & bytes[offset + 2]) << 8) | (255 & bytes[offset + 3]);
+  // Rust crate 用 u32::from_be_bytes，返回无符号 32 位
+  return (((255 & bytes[offset]) << 24) | ((255 & bytes[offset + 1]) << 16) |
+    ((255 & bytes[offset + 2]) << 8) | (255 & bytes[offset + 3])) >>> 0;
 }
 
 function zseRotl(value, shift) {
@@ -134,26 +135,30 @@ function zseRotl(value, shift) {
 }
 
 function zseTransform(value) {
+  // Rust crate g_transform: tt(u32) -> be_bytes -> SBOX -> be_bytes(u32)
   const a = new Array(4);
   const b = new Array(4);
-  zsePut(value, a, 0);
-  b[0] = ZSE_SBOX[255 & a[0]];
-  b[1] = ZSE_SBOX[255 & a[1]];
-  b[2] = ZSE_SBOX[255 & a[2]];
-  b[3] = ZSE_SBOX[255 & a[3]];
-  const r = zseGet(b, 0);
-  return r ^ zseRotl(r, 2) ^ zseRotl(r, 10) ^ zseRotl(r, 18) ^ zseRotl(r, 24);
+  zsePut(value >>> 0, a, 0);
+  b[0] = ZSE_SBOX[a[0]];
+  b[1] = ZSE_SBOX[a[1]];
+  b[2] = ZSE_SBOX[a[2]];
+  b[3] = ZSE_SBOX[a[3]];
+  const r = zseGet(b, 0) >>> 0;
+  return (r ^ zseRotl(r, 2) ^ zseRotl(r, 10) ^ zseRotl(r, 18) ^ zseRotl(r, 24)) >>> 0;
 }
 
 function zseRound(input) {
+  // 与 Rust crate r_block 完全一致：所有中间值按无符号 32 位处理
   const out = new Array(16);
   const words = new Array(36);
-  words[0] = zseGet(input, 0);
-  words[1] = zseGet(input, 4);
-  words[2] = zseGet(input, 8);
-  words[3] = zseGet(input, 12);
+  words[0] = zseGet(input, 0) >>> 0;
+  words[1] = zseGet(input, 4) >>> 0;
+  words[2] = zseGet(input, 8) >>> 0;
+  words[3] = zseGet(input, 12) >>> 0;
   for (let i = 0; i < 32; i++) {
-    words[i + 4] = words[i] ^ zseTransform(words[i + 1] ^ words[i + 2] ^ words[i + 3] ^ ZSE_KEYS[i]);
+    const k = ZSE_KEYS[i] >>> 0; // Rust crate 用 u32，把 JS 有符号常量转无符号
+    const x = (words[i + 1] ^ words[i + 2] ^ words[i + 3] ^ k) >>> 0;
+    words[i + 4] = (words[i] ^ zseTransform(x)) >>> 0;
   }
   zsePut(words[35], out, 0);
   zsePut(words[34], out, 4);
