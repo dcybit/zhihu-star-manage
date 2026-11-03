@@ -1050,6 +1050,36 @@ function exportTitleLinks() {
 
 /* ---------- 导出正文为 Markdown (ZIP) ---------- */
 
+// 正文接口：必须带 include=content，否则知乎风控会直接 403（文章尤其明显）
+// 每个类型按顺序尝试主域名 / 备用域名，返回第一个拿到非空 content 的响应
+const CONTENT_API_URLS = {
+  answer: [
+    (id) => `https://www.zhihu.com/api/v4/answers/${id}?include=content`,
+    (id) => `https://api.zhihu.com/v4/answers/${id}?include=content`,
+  ],
+  article: [
+    (id) => `https://www.zhihu.com/api/v4/articles/${id}?include=content,title,author,excerpt`,
+    (id) => `https://api.zhihu.com/v4/articles/${id}?include=content,title,author,excerpt`,
+  ],
+};
+
+async function fetchContent(it) {
+  const builders = CONTENT_API_URLS[it.type];
+  if (!builders || it.contentId == null) return null;
+  let fallback = null;
+  for (const build of builders) {
+    const resp = await api('GET', build(it.contentId));
+    if (!resp.ok || !resp.data) {
+      console.warn('[export] content failed', it.type, resp.status, resp.error || '');
+      continue;
+    }
+    const content = typeof resp.data.content === 'string' ? resp.data.content : '';
+    if (content.trim()) return resp.data;
+    fallback = resp.data; // 接口通了但正文为空，继续试备用地址
+  }
+  return fallback;
+}
+
 async function exportContentsZip() {
   if (state.busy || state.scope !== 'mine') return;
   let targets = state.selected.size
@@ -1086,21 +1116,13 @@ async function exportContentsZip() {
   const encoder = new TextEncoder();
 
   await runPool(targets, 2, async (it) => {
-    let apiUrl = null;
-    if (it.type === 'answer') apiUrl = `https://www.zhihu.com/api/v4/answers/${it.contentId}?include=content`;
-    else if (it.type === 'article') apiUrl = `https://www.zhihu.com/api/v4/articles/${it.contentId}`;
-
-    if (apiUrl) {
-      const resp = await api('GET', apiUrl);
-      if (resp.ok && resp.data) {
-        const md = buildMarkdownFile(it, resp.data.content || '');
-        const base = uniqueName(sanitizeFileName(it.title), usedNames);
-        files.push({ name: `${base}.md`, data: encoder.encode(md) });
-      } else {
-        failed.push(it);
-      }
+    const data = await fetchContent(it);
+    if (data) {
+      const md = buildMarkdownFile(it, typeof data.content === 'string' ? data.content : '');
+      const base = uniqueName(sanitizeFileName(it.title), usedNames);
+      files.push({ name: `${base}.md`, data: encoder.encode(md) });
     } else {
-      failed.push(it); // 不支持的类型
+      failed.push(it); // 接口失败或不支持的类型
     }
     done++;
     setStatus(`正在抓取正文… ${done}/${targets.length}`);
