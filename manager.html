@@ -25,10 +25,16 @@
   </div>
 
   <main id="mainView" class="layout" hidden>
-    <!-- 左侧：收藏夹列表 -->
+    <!-- 左侧：域导航 + 列表 -->
     <aside class="sidebar">
+      <div class="scope-tabs">
+        <button class="scope-tab active" data-scope="mine">我的收藏夹</button>
+        <button class="scope-tab" data-scope="favlists_follow">关注的收藏夹</button>
+        <button class="scope-tab" data-scope="questions_follow">关注的问题</button>
+        <button class="scope-tab" data-scope="columns_follow">关注的专栏</button>
+      </div>
       <div class="sidebar-header">
-        <input id="collectionFilter" class="input" type="text" placeholder="搜索收藏夹…">
+        <input id="listFilter" class="input" type="text" placeholder="搜索列表…">
         <button id="createCollectionBtn" class="btn btn-primary btn-sm" title="新建收藏夹">+ 新建</button>
       </div>
       <ul id="collectionList" class="collection-list"></ul>
@@ -49,6 +55,7 @@
 
       <div class="toolbar">
         <button id="removeBtn" class="btn btn-danger" disabled>取消收藏选中项</button>
+        <button id="unfollowBtn" class="btn btn-danger" disabled style="display:none">批量取关选中项</button>
         <button id="moveBtn" class="btn btn-ghost" disabled>移动到其他收藏夹</button>
         <div class="spacer"></div>
         <span class="export-label">导出：</span>
