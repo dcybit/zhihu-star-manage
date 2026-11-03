@@ -213,13 +213,13 @@ async function switchScope(scope, force = false) {
 // 根据 scope 显示/隐藏工具栏按钮
 function updateToolbarByScope() {
   const isFollow = state.scope !== 'mine';
-  // 取消收藏 / 移动 只在 mine 域显示且已选中收藏夹时启用
+  // 取消收藏 / 移动 只在 mine 域显示
   $('#removeBtn').style.display = isFollow ? 'none' : '';
   $('#moveBtn').style.display = isFollow ? 'none' : '';
   // 批量取关 只在 follow 域显示
   $('#unfollowBtn').style.display = isFollow ? '' : 'none';
-  // 顶部工具栏里"全选 / 反选"只在 mine 域有意义（follow 域多选在左侧列表项里做）
-  // 保留显示，follow 域下点击右侧表格全选也不影响（空表格）
+  // 导出工具栏 只在 mine 域显示
+  $('#exportToolbar').style.display = isFollow ? 'none' : '';
   updateSelectionUI();
 }
 
@@ -957,31 +957,55 @@ async function runPool(tasks, limit, worker) {
 
 /* ---------- 导出列表 ---------- */
 
+// 类型白名单：所有类型都能导出元数据（JSON/MD/CSV/TXT）
+// 只有 answer / article 能导出正文（ZIP），因为知乎 v4 没 pin/video 正文 API
+const EXPORTABLE_META_TYPES = new Set(['answer', 'article', 'pin', 'video', 'zvideo', 'unknown']);
+const EXPORTABLE_CONTENT_TYPES = new Set(['answer', 'article']);
+
+// 返回不可导出的条目列表（按 filterSet 判断），以及按类型分组的统计
+function filterUnsupported(items, filterSet) {
+  const unsupported = items.filter((it) => !filterSet.has(it.type));
+  const byType = {};
+  unsupported.forEach((it) => { byType[it.type] = (byType[it.type] || 0) + 1; });
+  return { unsupported, byType };
+}
+
+// 不可导出类型的中文名
+const TYPE_NAME = { answer: '回答', article: '文章', pin: '想法', video: '视频', zvideo: '视频', unknown: '其他' };
+function typeName(t) { return TYPE_NAME[t] || t; }
+
 function exportItems(fmt) {
-  if (state.busy) return;
-  const targets = state.selected.size
+  if (state.busy || state.scope !== 'mine') return;
+  let targets = state.selected.size
     ? state.items.filter((it) => state.selected.has(it.uid))
     : state.items;
   if (!targets.length) {
     alert('没有可导出的内容（请先加载收藏夹或勾选内容）');
     return;
   }
+
+  // 元数据导出：任何类型都能导出（含 pin/video），只是提醒用户
+  const { unsupported, byType } = filterUnsupported(targets, EXPORTABLE_META_TYPES);
+  if (unsupported.length > 0) {
+    const msg = `以下 ${unsupported.length} 条内容可能导出不完整：\n` +
+      Object.entries(byType).map(([t, n]) => `· ${typeName(t)} × ${n}`).join('\n') +
+      `\n\n建议取消勾选这些条目后重新导出。\n\n是否仍要继续导出？`;
+    if (!confirm(msg)) return;
+  }
+
   const name = `知乎收藏_${state.current ? state.current.title : 'export'}_${targets.length}条`;
 
   let content, mime, ext;
   if (fmt === 'json') {
     content = JSON.stringify(
-      targets.map(({ type, title, author, url }) => ({ type, title, author, url })),
+      targets.map(({ type, title, author, url }) => ({ type: typeName(type), title, author, url })),
       null,
       2
     );
     mime = 'application/json';
     ext = 'json';
   } else if (fmt === 'markdown') {
-    const lines = targets.map((it) => {
-      const typeName = it.type === 'answer' ? '回答' : it.type === 'article' ? '文章' : '其他';
-      return `- [${it.title}](${it.url})（${typeName} · ${it.author || '未知作者'}）`;
-    });
+    const lines = targets.map((it) => `- [${it.title}](${it.url})（${typeName(it.type)} · ${it.author || '未知作者'}）`);
     content = `# ${state.current ? state.current.title : '知乎收藏'}\n\n` + lines.join('\n') + '\n';
     mime = 'text/markdown';
     ext = 'md';
@@ -989,8 +1013,7 @@ function exportItems(fmt) {
     const esc = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
     const rows = [['类型', '标题', '作者', '链接'].map(esc).join(',')];
     for (const it of targets) {
-      const typeName = it.type === 'answer' ? '回答' : it.type === 'article' ? '文章' : '其他';
-      rows.push([typeName, it.title, it.author, it.url].map(esc).join(','));
+      rows.push([typeName(it.type), it.title, it.author, it.url].map(esc).join(','));
     }
     content = '﻿' + rows.join('\r\n');
     mime = 'text/csv';
@@ -1004,17 +1027,26 @@ function exportItems(fmt) {
 /* ---------- 仅导出标题和链接 (TXT) ---------- */
 
 function exportTitleLinks() {
-  if (state.busy) return;
-  const targets = state.selected.size
+  if (state.busy || state.scope !== 'mine') return;
+  let targets = state.selected.size
     ? state.items.filter((it) => state.selected.has(it.uid))
     : state.items;
   if (!targets.length) {
     alert('没有可导出的内容（请先加载收藏夹或勾选内容）');
     return;
   }
+
+  const { unsupported, byType } = filterUnsupported(targets, EXPORTABLE_META_TYPES);
+  if (unsupported.length > 0) {
+    const msg = `以下 ${unsupported.length} 条内容可能导出不完整：\n` +
+      Object.entries(byType).map(([t, n]) => `· ${typeName(t)} × ${n}`).join('\n') +
+      `\n\n建议取消勾选这些条目后重新导出。\n\n是否仍要继续导出？`;
+    if (!confirm(msg)) return;
+  }
+
   const name = `知乎收藏_${state.current ? state.current.title : 'export'}_${targets.length}条`;
   const content = targets
-    .map((it) => `${it.title}\n${it.url || '(无链接)'}`)
+    .map((it) => `${typeName(it.type)}｜${it.title}\n${it.url || '(无链接)'}`)
     .join('\n\n') + '\n';
   downloadBlob(new Blob([content], { type: 'text/plain;charset=utf-8' }), `${name}.txt`);
   setStatus(`已导出 ${targets.length} 条标题和链接（TXT）`);
@@ -1023,14 +1055,30 @@ function exportTitleLinks() {
 /* ---------- 导出正文为 Markdown (ZIP) ---------- */
 
 async function exportContentsZip() {
-  if (state.busy) return;
-  const targets = state.selected.size
+  if (state.busy || state.scope !== 'mine') return;
+  let targets = state.selected.size
     ? state.items.filter((it) => state.selected.has(it.uid))
     : state.items;
   if (!targets.length) {
     alert('没有可导出的内容（请先加载收藏夹或勾选内容）');
     return;
   }
+
+  // 正文导出：只有 answer/article 支持
+  const { unsupported, byType } = filterUnsupported(targets, EXPORTABLE_CONTENT_TYPES);
+  if (unsupported.length > 0) {
+    const msg = `以下 ${unsupported.length} 条内容不支持正文抓取（知乎无对应 API）：\n` +
+      Object.entries(byType).map(([t, n]) => `· ${typeName(t)} × ${n}`).join('\n') +
+      `\n\n这些条目将被跳过，仅导出 ${targets.length - unsupported.length} 条可抓取的内容。\n\n建议取消勾选不支持的条目后再导出。\n\n是否仍要继续？`;
+    if (!confirm(msg)) return;
+    // 跳过不支持的条目
+    targets = targets.filter((it) => EXPORTABLE_CONTENT_TYPES.has(it.type));
+    if (!targets.length) {
+      alert('剩余条目全部不支持正文抓取，请取消导出。');
+      return;
+    }
+  }
+
   if (targets.length > 30 && !confirm(`将抓取 ${targets.length} 篇内容的正文，可能需要较长时间，继续？`)) return;
 
   state.busy = true;
