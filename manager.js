@@ -4,9 +4,8 @@ const $ = (sel) => document.querySelector(sel);
 
 const state = {
   me: null,
-  scope: 'mine',                 // 'mine' | 'favlists_follow' | 'questions_follow' | 'columns_follow'
+  scope: 'mine',                 // 'mine' | 'questions_follow' | 'columns_follow'
   collections: [],
-  followCollections: [],        // 关注的收藏夹
   followQuestions: [],           // 关注的问题
   followColumns: [],             // 关注的专栏
   current: null,                 // 当前选中的侧栏对象（收藏夹 / 关注项）
@@ -149,14 +148,6 @@ async function loadSidebarByScope(scope) {
     setStatus(`共 ${r.data.length} 个收藏夹`);
     return true;
   }
-  if (scope === 'favlists_follow') {
-    setStatus('正在加载关注的收藏夹…');
-    const r = await fetchPaginatedList(`/members/${meUrl}/following-favlists`);
-    if (!r.ok) { setStatus(`关注收藏夹加载失败（HTTP ${r.status}）`); return false; }
-    state.followCollections = r.data;
-    setStatus(`共关注 ${r.data.length} 个收藏夹`);
-    return true;
-  }
   if (scope === 'questions_follow') {
     setStatus('正在加载关注的问题…');
     const r = await fetchPaginatedList(`/members/${meUrl}/following-questions`);
@@ -228,7 +219,6 @@ function updateToolbarByScope() {
 // 根据 scope 返回侧栏原始数据
 function getSidebarRawList() {
   if (state.scope === 'mine') return state.collections;
-  if (state.scope === 'favlists_follow') return state.followCollections;
   if (state.scope === 'questions_follow') return state.followQuestions;
   if (state.scope === 'columns_follow') return state.followColumns;
   return [];
@@ -308,14 +298,14 @@ function renderSidebar(filter = '') {
 }
 
 function rawSidebarUid(raw) {
-  if (state.scope === 'mine' || state.scope === 'favlists_follow') return `fav_${raw.id}`;
+  if (state.scope === 'mine') return `fav_${raw.id}`;
   if (state.scope === 'questions_follow') return `q_${raw.id}`;
   if (state.scope === 'columns_follow') return `col_${raw.id || raw.url_token}`;
   return String(raw.id);
 }
 
 function sidebarItemTitle(raw) {
-  if (state.scope === 'mine' || state.scope === 'favlists_follow') return raw.title || '(未命名收藏夹)';
+  if (state.scope === 'mine') return raw.title || '(未命名收藏夹)';
   if (state.scope === 'questions_follow') return raw.title || '(未命名问题)';
   if (state.scope === 'columns_follow') return raw.title || '(未命名专栏)';
   return '';
@@ -323,7 +313,6 @@ function sidebarItemTitle(raw) {
 
 function sidebarItemCount(raw) {
   if (state.scope === 'mine') return raw.item_count ?? '';
-  if (state.scope === 'favlists_follow') return raw.item_count ?? '';
   if (state.scope === 'questions_follow') {
     if (typeof raw.follower_count === 'number') return `${raw.follower_count}关注`;
     if (typeof raw.answer_count === 'number') return `${raw.answer_count}回答`;
@@ -427,10 +416,55 @@ function extractPinText(content) {
   return parts.join('').replace(/<[^>]*>/g, '').trim();
 }
 
+// 检测 content 是否是「pin 内嵌视频」（知乎 API 仍返回 type=pin，但有这些特征）
+function isPinWithVideo(c) {
+  if (!c || typeof c !== 'object') return false;
+  if (c.video_info || c.video || c.zvideo_id || c.video_id || c.media_id) return true;
+  if (c.is_video === true || c.has_video === true) return true;
+  if (c.video_thumbnail) return true;
+  // immersion/feed 是 pin 内嵌视频的标志路径，不是独立视频
+  if (typeof c.url === 'string' && c.url.includes('/video/immersion/feed/')) return true;
+  return false;
+}
+
+// 检测 content 是否是「独立视频实体」（原生 video/zvideo）
+function isStandaloneVideo(rawType, c) {
+  if (rawType === 'video' || rawType === 'zvideo') return true;
+  if (!c || typeof c !== 'object') return false;
+  // 独立视频不会有 excerpt_title（那是 pin 的字段）
+  if (c.excerpt_title) return false;
+  // 独立视频有 zvideo_id/video_id/media_id 之一（但不是嵌套在 video_info 里的）
+  return !!(c.zvideo_id || c.video_id || c.media_id);
+}
+
+// 从 c.url 提取 pin ID（兼容各种 pin URL 格式）
+function extractPinIdFromUrl(u) {
+  if (typeof u !== 'string') return null;
+  const m1 = u.match(/\/pin\/(\d+)/);
+  if (m1) return m1[1];
+  // immersion/feed/{pinId}?object_type=pin
+  const m2 = u.match(/\/video\/immersion\/feed\/(\d+)/);
+  if (m2) return m2[1];
+  return null;
+}
+
 function normalizeMineItem(item, idx) {
   const c = item.content || {};
   // 兜底：如果 item 本身就是 answer/article 结构（分类型端点包装失败）
-  const rawType = c.type || item.type || 'unknown';
+  const originalType = c.type || item.type || 'unknown'; // API 原始类型，永不修改
+  let rawType = originalType;  // 可被展示纠正覆盖
+  let isEmbeddedVideo = false; // pin 内嵌视频标记
+  // 知乎 pin 类型可以内嵌视频，但 API 仍返回 type=pin —— 标记为视频并单独处理 URL
+  if (rawType === 'pin' && isPinWithVideo(c)) {
+    console.info('[normalizeMineItem] idx=' + idx + ' pin 内嵌视频标记 (c.id=', c.id,
+      ', url=', c.url, ')');
+    isEmbeddedVideo = true;
+    rawType = 'video';
+  } else if (rawType === 'pin' || rawType === 'video' || rawType === 'zvideo' || rawType === 'unknown') {
+    console.info('[normalizeMineItem] idx=' + idx + ' rawType=' + rawType,
+      'c.type=', c.type, 'c.id=', c.id, 'c.url=', c.url,
+      'keys=', Object.keys(c).slice(0, 15));
+  }
   const type = rawType;
   let title = '';
   let url = '';
@@ -456,9 +490,42 @@ function normalizeMineItem(item, idx) {
     const pinId = c.id ?? item.id;
     url = c.url || (pinId ? `https://www.zhihu.com/pin/${pinId}` : '');
   } else if (type === 'video' || type === 'zvideo') {
-    title = c.title || '(无标题视频)';
-    url = c.url || '';
-    if (!url && c.id) url = `https://www.zhihu.com/video/${c.id}`;
+    // ---- 标题 ----
+    if (c.title) {
+      title = c.title;
+    } else if (c.excerpt_title) {
+      title = c.excerpt_title;
+    } else {
+      const fromContent = extractPinText(c.content);
+      title = fromContent || '(无标题视频)';
+    }
+    if (title.length > 60) title = title.slice(0, 60) + '…';
+
+    // ---- URL ----
+    if (isEmbeddedVideo) {
+      // pin 内嵌视频：必须打开 pin 页面（带 video_pin 参数可直接定位视频）
+      const pinId = extractPinIdFromUrl(c.url) || c.id;
+      if (pinId) {
+        url = `https://www.zhihu.com/pin/${pinId}?page=video_pin`;
+      } else if (c.url) {
+        url = c.url;
+      }
+      console.info('[video normalize] idx=' + idx, '内嵌视频 URL=' + url);
+    } else {
+      // 独立视频实体：优先用 content 自带的合法 URL
+      if (c.url && !c.url.includes('/immersion/feed/')) {
+        url = c.url;
+      }
+      // 否则尝试用 zvideo_id / video_id 构造
+      if (!url) {
+        const vid = c.zvideo_id || c.video_id || (c.video_info && c.video_info.video_id);
+        if (vid) {
+          url = `https://www.zhihu.com/video/${vid}`;
+        }
+      }
+      console.info('[video normalize] idx=' + idx, '独立视频 URL=' + url);
+    }
+    if (url && url.startsWith('/')) url = 'https://www.zhihu.com' + url;
   } else {
     title = c.title || (c.question && c.question.title) || '(其他内容)';
     url = c.url || '';
@@ -467,7 +534,8 @@ function normalizeMineItem(item, idx) {
   return {
     uid: `${type}_${c.id != null ? c.id : `idx${idx}`}`,
     contentId: c.id,
-    type,
+    type,          // 展示用（pin 内嵌视频纠正为 video，让标签正确）
+    entityType: originalType, // API 调用用（底层真实实体类型：answer/article/pin/video，永远不被展示纠正覆盖）
     title,
     url,
     author: (c.author && c.author.name) || '',
@@ -487,8 +555,7 @@ function renderFollowDetail(raw) {
   td.colSpan = 4;
   td.style.padding = '16px';
 
-  const typeLabel = state.scope === 'favlists_follow' ? '收藏夹'
-    : state.scope === 'questions_follow' ? '问题'
+  const typeLabel = state.scope === 'questions_follow' ? '问题'
     : state.scope === 'columns_follow' ? '专栏'
     : "内容";
 
@@ -507,7 +574,6 @@ function renderFollowDetail(raw) {
   const meta = document.createElement('div');
   meta.style.cssText = 'font-size:13px;color:#646464;margin-bottom:12px;line-height:1.8;';
   const metaParts = [`类型：${typeLabel}`];
-  if (state.scope === 'favlists_follow' && raw.creator) metaParts.push(`创建者：${raw.creator.name || '(匿名)'}`);
   if (state.scope === 'questions_follow' && raw.author) metaParts.push(`提问者：${raw.author.name || '(匿名)'}`);
   if (state.scope === 'columns_follow' && raw.author) metaParts.push(`作者：${raw.author.name || '(匿名)'}`);
   if (typeof raw.item_count === 'number') metaParts.push(`内容数：${raw.item_count}`);
@@ -553,14 +619,12 @@ function renderFollowDetail(raw) {
 }
 
 function followDetailTitle(raw) {
-  if (state.scope === 'favlists_follow') return raw.title || '(未命名收藏夹)';
   if (state.scope === 'questions_follow') return raw.title || '(未命名问题)';
   if (state.scope === 'columns_follow') return raw.title || '(未命名专栏)';
   return '';
 }
 
 function followDetailUrl(raw) {
-  if (state.scope === 'favlists_follow') return `https://www.zhihu.com/collection/${raw.id}`;
   if (state.scope === 'questions_follow') return `https://www.zhihu.com/question/${raw.id}`;
   if (state.scope === 'columns_follow') {
     // 专栏路由：www.zhihu.com/column/{id}
@@ -580,53 +644,87 @@ function openInNewTab(url) {
 }
 
 function removeFromSidebar(raw) {
-  if (state.scope === 'favlists_follow') state.followCollections = state.followCollections.filter((x) => x.id !== raw.id);
   if (state.scope === 'questions_follow') state.followQuestions = state.followQuestions.filter((x) => x.id !== raw.id);
   if (state.scope === 'columns_follow') state.followColumns = state.followColumns.filter((x) => String(x.id || x.url_token) !== String(raw.id || raw.url_token));
 }
 
 /* ---------- 批量取消关注 ---------- */
 
-// 取关单个对象，根据 scope 拼不同端点
-// 问题：DELETE /api/v4/questions/{id}/followers
-// 专栏：DELETE /api/v4/columns/{id}/followers
-// 收藏夹：DELETE /api/v4/collections/{id}/followers
-async function unfollowOne(raw, scope) {
+// 递归搜索对象中 is_following / relationship.following 字段位置
+function findIsFollowing(obj, path = 'root', found = []) {
+  if (!obj || typeof obj !== 'object') return found;
+  if ('is_following' in obj) found.push({ path: path + '.is_following', value: obj.is_following });
+  if (obj.relationship && typeof obj.relationship === 'object') {
+    if ('following' in obj.relationship) found.push({ path: path + '.relationship.following', value: obj.relationship.following });
+  }
+  for (const k of Object.keys(obj)) {
+    if (typeof obj[k] === 'object' && obj[k] !== null) {
+      findIsFollowing(obj[k], path + '.' + k, found);
+    }
+  }
+  return found;
+}
+
+// 验证取关是否真的生效（GET 接口看 is_following）
+async function verifyUnfollow(raw, scope) {
+  const id = raw.id || raw.url_token;
+  if (!id) return false;
   let endpoint = null;
   if (scope === 'questions_follow') {
-    endpoint = `/questions/${raw.id}/followers`;
+    endpoint = `/questions/${id}`;
   } else if (scope === 'columns_follow') {
-    const id = raw.id || raw.url_token;
-    endpoint = `/columns/${id}/followers`;
-  } else if (scope === 'favlists_follow') {
-    endpoint = `/collections/${raw.id}/followers`;
+    endpoint = `/columns/${id}`;
   }
-  if (!endpoint) return { ok: false, status: 0 };
+  if (!endpoint) return false;
+  // 只用 www.zhihu.com（api.zhihu.com 对 collections 域部分无效）
+  const resp = await api('GET', 'https://www.zhihu.com/api/v4' + endpoint);
+  if (resp.ok && resp.data) {
+    const d = resp.data;
+    const found = findIsFollowing(d);
+    console.info('[unfollow-verify] keys=', Object.keys(d).slice(0, 10), 'is_following@=', JSON.stringify(found));
+    for (const f of found) {
+      if (f.value === false) return true;
+    }
+  }
+  return false;
+}
 
-  const bases = [
-    `https://www.zhihu.com/api/v4${endpoint}`,
-    `https://api.zhihu.com${endpoint}`,
-  ];
-  let lastStatus = 0;
-  for (const base of bases) {
-    const resp = await api('DELETE', base);
-    if (resp.ok) return { ok: true };
-    lastStatus = resp.status || 0;
-    console.warn('[unfollow] failed', base, resp.status, resp.data);
+// 取关单个对象
+// 问题/专栏的 DELETE /{type}/{id}/followers 是已验证可用的
+async function unfollowOne(raw, scope) {
+  const id = raw.id || raw.url_token;
+  if (!id) return { ok: false, status: 0 };
+
+  let type;
+  if (scope === 'questions_follow') type = 'questions';
+  else if (scope === 'columns_follow') type = 'columns';
+  if (!type) return { ok: false, status: 0 };
+
+  const url = `https://www.zhihu.com/api/v4/${type}/${id}/followers`;
+  console.info('[unfollow] DELETE', url);
+  const resp = await api('DELETE', url);
+  if (resp.ok) {
+    console.info('[unfollow] ✅ SUCCESS', url);
+    return { ok: true };
   }
-  return { ok: false, status: lastStatus };
+  console.warn('[unfollow] ❌ FAILED', url, resp.status, resp.data);
+  return { ok: false, status: resp.status };
 }
 
 // 侧栏多选批量取关
 async function batchUnfollow() {
+  console.info('[batchUnfollow] 入口, scope=', state.scope, 'selected.size=', state.listSelected.size, 'busy=', state.busy);
   if (state.busy) return;
   if (state.listSelected.size === 0) return;
   const rawList = getSidebarRawList();
   const targets = rawList.filter((r) => state.listSelected.has(rawSidebarUid(r)));
+  console.info('[batchUnfollow] targets:', targets.map(t => ({ id: t.id, name: t.title || t.name || t.token })));
   if (targets.length === 0) return;
   if (!confirm(`确定批量取消关注这 ${targets.length} 项吗？`)) return;
 
   state.busy = true;
+
+  // 问题/专栏：逐个走 DELETE API（并发 3）
   const failed = [];
   const failStatuses = new Set();
   let done = 0;
@@ -645,7 +743,6 @@ async function batchUnfollow() {
 
   // 从侧栏数据源移除成功项
   const okSet = new Set(targets.filter((t) => !failed.includes(t)).map((t) => rawSidebarUid(t)));
-  if (state.scope === 'favlists_follow') state.followCollections = state.followCollections.filter((r) => !okSet.has(rawSidebarUid(r)));
   if (state.scope === 'questions_follow') state.followQuestions = state.followQuestions.filter((r) => !okSet.has(rawSidebarUid(r)));
   if (state.scope === 'columns_follow') state.followColumns = state.followColumns.filter((r) => !okSet.has(rawSidebarUid(r)));
 
@@ -687,6 +784,10 @@ function renderItems() {
   tbody.innerHTML = '';
   const list = filteredItems();
   $('#emptyTip').hidden = list.length > 0;
+
+  // 调试：每次渲染都打印全量条目，确保能在扩展页面的 Console 看到
+  console.info('[renderItems] 共 ' + list.length + ' 条',
+    list.map((it) => ({ type: it.type, title: (it.title || '').slice(0, 30), url: it.url, uid: it.uid })));
 
   for (const it of list) {
     const tr = document.createElement('tr');
@@ -816,10 +917,13 @@ async function batchRemove() {
 // 从收藏夹移除单条内容
 // 接口：PUT /collections/contents/{type}/{contentId} + form remove_collections=收藏夹ID
 // type 支持 answer / article / pin / video (含 zvideo)
+// 注意：pin 内嵌视频的 type 被纠正为 'video'（展示用），但 entityType 仍是 'pin'（API 必须用 pin）
 async function removeOneItem(it, collectionId) {
+  // API 路径用 entityType（底层真实实体），不是 type（展示纠正后的值）
+  const realType = it.entityType || it.type;
   const supported = ['answer', 'article', 'pin', 'video', 'zvideo'];
-  if (!supported.includes(it.type)) return { ok: false, status: 0 };
-  const apiType = it.type === 'zvideo' ? 'video' : it.type;
+  if (!supported.includes(realType)) return { ok: false, status: 0 };
+  const apiType = realType === 'zvideo' ? 'video' : realType;
 
   const path = `/collections/contents/${apiType}/${it.contentId}`;
   const bases = [`https://www.zhihu.com/api/v4${path}`, `https://api.zhihu.com${path}`];
@@ -829,7 +933,7 @@ async function removeOneItem(it, collectionId) {
     const resp = await api('PUT', base, `remove_collections=${collectionId}`, 'form');
     if (resp.ok) return { ok: true };
     lastStatus = resp.status || 0;
-    console.warn('[remove] failed', base, resp.status, resp.data);
+    console.warn('[remove] failed', base, resp.status, resp.data, 'entityType=', realType, 'contentId=', it.contentId);
   }
   return { ok: false, status: lastStatus };
 }
@@ -920,10 +1024,13 @@ async function batchMove(target) {
 // 移动单条内容到目标收藏夹
 // 接口：PUT /collections/contents/{type}/{contentId}，type 支持 answer / article / pin / video
 // 表单体 add_collections=收藏夹ID 加入；remove_collections=收藏夹ID 移出
+// 注意：pin 内嵌视频的 type 被纠正为 'video'（展示用），但 entityType 仍是 'pin'（API 必须用 pin）
 async function moveOneItem(it, srcId, targetId) {
+  // API 路径用 entityType（底层真实实体），不是 type（展示纠正后的值）
+  const realType = it.entityType || it.type;
   const supported = ['answer', 'article', 'pin', 'video', 'zvideo'];
-  if (!supported.includes(it.type)) return { ok: false, status: 0 };
-  const apiType = it.type === 'zvideo' ? 'video' : it.type;
+  if (!supported.includes(realType)) return { ok: false, status: 0 };
+  const apiType = realType === 'zvideo' ? 'video' : realType;
 
   const path = `/collections/contents/${apiType}/${it.contentId}`;
   const bases = [`https://www.zhihu.com/api/v4${path}`, `https://api.zhihu.com${path}`];
@@ -934,7 +1041,7 @@ async function moveOneItem(it, srcId, targetId) {
     const add = await api('PUT', base, `add_collections=${targetId}`, 'form');
     if (!add.ok) {
       lastStatus = add.status || 0;
-      console.warn('[move] add failed', base, add.status, add.data);
+      console.warn('[move] add failed', base, add.status, add.data, 'entityType=', realType, 'contentId=', it.contentId);
       continue; // 换备用 host 重试
     }
     // 成功加入后再移出当前收藏夹

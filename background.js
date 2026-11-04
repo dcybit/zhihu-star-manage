@@ -236,7 +236,9 @@ function makeSignHeaders(url, dc0, pathOnly) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || msg.type !== 'zhihu-api') return false;
+  if (!msg) return false;
+
+  if (msg.type !== 'zhihu-api') return false;
 
   (async () => {
     try {

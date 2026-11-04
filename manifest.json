@@ -20,6 +20,6 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["cookies", "storage"],
+  "permissions": ["cookies", "storage", "scripting"],
   "host_permissions": ["https://www.zhihu.com/*", "https://api.zhihu.com/*"]
 }

@@ -58,23 +58,23 @@ body {
   min-height: 0;
 }
 
-/* 域切换 Tab */
+/* 域切换：一级「我的收藏夹」 + 二级关注类 Tab */
 .scope-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
   margin-bottom: 10px;
 }
 .scope-tab {
   border: 1px solid #ebebeb;
   background: #fff;
-  color: #646464;
-  border-radius: 14px;
-  padding: 4px 10px;
-  font-size: 12px;
+  color: #8590a6;
+  border-radius: 12px;
+  padding: 5px 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   white-space: nowrap;
 }
 .scope-tab:hover { border-color: #056de8; color: #056de8; }
@@ -83,6 +83,22 @@ body {
   border-color: #056de8;
   color: #fff;
   font-weight: 600;
+}
+
+/* 一级：我的收藏夹（独占一行，放大突出） */
+.scope-tab.tab-mine {
+  flex: 1 1 100%;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border-color: #056de8;
+  color: #056de8;
+}
+.scope-tab.tab-mine.active {
+  background: #056de8;
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(5, 109, 232, 0.35);
 }
 
 .sidebar-header {

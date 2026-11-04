@@ -28,8 +28,7 @@
     <!-- 左侧：域导航 + 列表 -->
     <aside class="sidebar">
       <div class="scope-tabs">
-        <button class="scope-tab active" data-scope="mine">我的收藏夹</button>
-        <button class="scope-tab" data-scope="favlists_follow">关注的收藏夹</button>
+        <button class="scope-tab tab-mine active" data-scope="mine">我的收藏夹</button>
         <button class="scope-tab" data-scope="questions_follow">关注的问题</button>
         <button class="scope-tab" data-scope="columns_follow">关注的专栏</button>
       </div>
@@ -50,6 +49,7 @@
           <span>全选</span>
         </label>
         <button id="invertBtn" class="btn btn-ghost">反选</button>
+        <button id="unfollowBtn" class="btn btn-danger" disabled style="display:none">批量取关选中项</button>
         <span id="selCount" class="sel-count">已选 0 项</span>
         <input id="itemFilter" class="input grow" type="text" placeholder="在当前收藏夹内筛选标题 / 作者…">
         <button id="reloadItemsBtn" class="btn btn-ghost">重新加载</button>
@@ -57,7 +57,6 @@
 
       <div class="toolbar" id="exportToolbar">
         <button id="removeBtn" class="btn btn-danger" disabled>取消收藏选中项</button>
-        <button id="unfollowBtn" class="btn btn-danger" disabled style="display:none">批量取关选中项</button>
         <button id="moveBtn" class="btn btn-ghost" disabled>移动到其他收藏夹</button>
         <div class="spacer"></div>
         <span class="export-label">导出：</span>
