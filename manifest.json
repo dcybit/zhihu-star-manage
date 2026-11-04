@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "知乎收藏夹批量管理",
-  "version": "1.1.0",
-  "description": "批量管理知乎收藏夹：新建/编辑/删除收藏夹、批量取消收藏、移动、导出。",
+  "version": "1.2.0",
+  "description": "批量管理知乎收藏夹与关注域：支持回答/文章/想法/视频的批量取消收藏、移动、导出，支持问题/专栏的批量取关。",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
